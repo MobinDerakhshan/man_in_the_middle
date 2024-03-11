@@ -1,0 +1,14 @@
+[package]
+name = "ultra_mid"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+pcap = "1.2.0"
+tokio = { version = "1", features = ["full"] }
+smoltcp = { version = "0.10.0", default-features = false, features = ["log"] }
+tokio-smoltcp = "0.4.1"
+mac_address = "0.8.0"
+anyhow = "1.0.80"
